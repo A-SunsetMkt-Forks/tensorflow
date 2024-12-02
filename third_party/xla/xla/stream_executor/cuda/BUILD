@@ -1,15 +1,6 @@
 load("@bazel_skylib//rules:common_settings.bzl", "bool_flag")
 load("@local_config_cuda//cuda:build_defs.bzl", "cuda_library")
 load(
-    "@local_tsl//tsl/platform:build_config_root.bzl",
-    "if_static",
-    "tf_cuda_tests_tags",
-)
-load(
-    "@local_tsl//tsl/platform:rules_cc.bzl",
-    "cc_library",
-)
-load(
     "//xla:xla.bzl",
     "xla_cc_test",
 )
@@ -28,6 +19,15 @@ load(
     "if_windows",
     "internal_visibility",
     "tsl_copts",
+)
+load(
+    "//xla/tsl/platform:build_config_root.bzl",
+    "if_static",
+    "tf_cuda_tests_tags",
+)
+load(
+    "//xla/tsl/platform:rules_cc.bzl",
+    "cc_library",
 )
 load(
     "//xla/tsl/platform/default:cuda_build_defs.bzl",
@@ -139,8 +139,28 @@ cc_library(
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@com_google_absl//absl/strings:str_format",
+        "@local_tsl//tsl/platform:env",
         "@local_tsl//tsl/platform:logging",
         "@local_tsl//tsl/platform:platform_port",
+    ],
+)
+
+xla_test(
+    name = "cuda_diagnostics_test",
+    srcs = ["cuda_diagnostics_test.cc"],
+    backends = ["gpu"],
+    tags = ["cuda-only"],
+    deps = [
+        ":cuda_diagnostics",
+        ":cuda_platform",
+        "//xla/stream_executor:platform",
+        "//xla/stream_executor:platform_manager",
+        "@com_google_absl//absl/debugging:leak_check",
+        "@com_google_absl//absl/log:check",
+        "@com_google_absl//absl/log:globals",
+        "@com_google_googletest//:gtest_main",
+        "@local_tsl//tsl/platform:statusor",
+        "@local_tsl//tsl/platform:test",
     ],
 )
 
@@ -660,6 +680,9 @@ cc_library(
     srcs = ["ptx_compiler_helpers.cc"],
     hdrs = ["ptx_compiler_helpers.h"],
     deps = [
+        "//xla/stream_executor:device_description",
+        "//xla/stream_executor:semantic_version",
+        "@com_google_absl//absl/base",
         "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/strings",
@@ -667,7 +690,7 @@ cc_library(
     ],
 )
 
-cc_test(
+xla_cc_test(
     name = "ptx_compiler_helpers_test",
     srcs = ["ptx_compiler_helpers_test.cc"],
     deps = [
@@ -717,6 +740,7 @@ cc_library(
         "@local_config_cuda//cuda:cuda_headers",
         "@local_config_cuda//cuda:nvptxcompiler",
         "@local_tsl//tsl/platform:logging",
+        "@local_tsl//tsl/platform:statusor",
     ],
 )
 
@@ -1720,5 +1744,40 @@ cc_library(
         "@local_config_cuda//cuda:cuda_headers",
         "@local_tsl//tsl/platform:errors",
         "@local_tsl//tsl/platform:statusor",
+    ],
+)
+
+cc_library(
+    name = "defer_relocatable_compilation_compilation_provider",
+    srcs = ["defer_relocatable_compilation_compilation_provider.cc"],
+    hdrs = ["defer_relocatable_compilation_compilation_provider.h"],
+    deps = [
+        ":compilation_options",
+        ":compilation_provider",
+        "//xla/stream_executor:device_description",
+        "@com_google_absl//absl/memory",
+        "@com_google_absl//absl/status",
+        "@com_google_absl//absl/status:statusor",
+        "@com_google_absl//absl/strings",
+        "@com_google_absl//absl/strings:str_format",
+        "@com_google_absl//absl/strings:string_view",
+        "@com_google_absl//absl/types:span",
+    ],
+)
+
+xla_cc_test(
+    name = "defer_relocatable_compilation_compilation_provider_test",
+    srcs = ["defer_relocatable_compilation_compilation_provider_test.cc"],
+    deps = [
+        ":compilation_options",
+        ":compilation_provider",
+        ":defer_relocatable_compilation_compilation_provider",
+        ":mock_compilation_provider",
+        "//xla/stream_executor:device_description",
+        "@com_google_absl//absl/status",
+        "@com_google_googletest//:gtest_main",
+        "@local_tsl//tsl/platform:status_matchers",
+        "@local_tsl//tsl/platform:statusor",
+        "@local_tsl//tsl/platform:test",
     ],
 )
