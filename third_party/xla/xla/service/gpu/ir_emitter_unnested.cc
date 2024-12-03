@@ -68,6 +68,7 @@ limitations under the License.
 #include "mlir/Target/LLVMIR/Dialect/NVVM/NVVMToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/ROCDL/ROCDLToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Export.h"
+#include "xla/backends/gpu/collectives/gpu_clique_key.h"
 #include "xla/ffi/api/c_api.h"
 #include "xla/ffi/attribute_map.h"
 #include "xla/ffi/ffi_api.h"
@@ -80,6 +81,7 @@ limitations under the License.
 #include "xla/layout.h"
 #include "xla/layout_util.h"
 #include "xla/literal.h"
+#include "xla/mlir/utils/error_util.h"
 #include "xla/mlir_hlo/transforms/gpu_passes.h"
 #include "xla/primitive_util.h"
 #include "xla/service/buffer_assignment.h"
@@ -125,7 +127,6 @@ limitations under the License.
 #include "xla/service/gpu/runtime/nccl_all_to_all_thunk.h"
 #include "xla/service/gpu/runtime/nccl_api.h"
 #include "xla/service/gpu/runtime/nccl_clique.h"
-#include "xla/service/gpu/runtime/nccl_clique_key.h"
 #include "xla/service/gpu/runtime/nccl_collective_broadcast_thunk.h"
 #include "xla/service/gpu/runtime/nccl_collective_permute_thunk.h"
 #include "xla/service/gpu/runtime/nccl_collective_thunk.h"
@@ -1135,7 +1136,6 @@ absl::Status IrEmitterUnnested::EmitCustomCallThunk(
   // For legacy custom calls we convert all API versions into the latest
   // status-returning one and pass backend config as an opaque string.
   CustomCallThunk::CustomCallTarget custom_call_target;
-  std::string opaque;
 
   // For XLA FFI handlers we decode opaque backend config into attributes map
   // at IR emission time, so that we do not need to parse MLIR at run time. For
@@ -1175,37 +1175,30 @@ absl::Status IrEmitterUnnested::EmitCustomCallThunk(
                       instr->api_version());
   }
 
-  auto& backend_config_str = instr->raw_backend_config_string();
-  switch (instr->api_version()) {
-    case CustomCallApiVersion::API_VERSION_ORIGINAL:
-    case CustomCallApiVersion::API_VERSION_STATUS_RETURNING:
-    case CustomCallApiVersion::API_VERSION_STATUS_RETURNING_UNIFIED:
-      if (!backend_config_str.empty()) {
-        opaque = backend_config_str;
-      }
-      break;
+  auto backend_config = instr->backend_config<GpuBackendConfig>();
+  if (!backend_config.ok()) {
+    LOG(WARNING) << "Unable to parse backend config for custom call: "
+                 << backend_config.status().message() << "\n"
+                 << "Fall back to parse the raw backend config str.";
+  }
 
-    case CustomCallApiVersion::API_VERSION_TYPED_FFI:
-      if (!backend_config_str.empty()) {
-        mlir::Attribute attr = mlir::parseAttribute(
-            backend_config_str, ir_emitter_context_->mlir_context());
-        if (auto dict = mlir::dyn_cast_or_null<mlir::DictionaryAttr>(attr)) {
-          TF_ASSIGN_OR_RETURN(attributes, xla::ffi::BuildAttributesMap(dict));
-          break;
-        }
+  auto ffi_thunk = [&]() -> absl::StatusOr<std::unique_ptr<CustomCallThunk>> {
+    auto& called_computations = instr->called_computations();
+    auto& backend_config_str =
+        backend_config.ok()
+            ? backend_config->custom_call_backend_config().attributes()
+            : instr->raw_backend_config_string();
+    if (!backend_config_str.empty()) {
+      mlir::Attribute attr = mlir::parseAttribute(
+          backend_config_str, ir_emitter_context_->mlir_context());
+      auto dict = mlir::dyn_cast_or_null<mlir::DictionaryAttr>(attr);
+      if (dict == nullptr) {
         return absl::InternalError(
             "Unsupported backend config. Expected a string parsable into "
             "dictionary attribute");
       }
-      break;
-
-    default:
-      return Internal("Unknown custom-call API version enum value: %d",
-                      instr->api_version());
-  }
-
-  auto ffi_thunk = [&] {
-    auto& called_computations = instr->called_computations();
+      TF_ASSIGN_OR_RETURN(attributes, xla::ffi::BuildAttributesMap(dict));
+    }
     return CustomCallThunk::Create(
         Thunk::ThunkInfo::WithProfileAnnotation(instr), call_target_name,
         registration->bundle, std::move(operands), std::move(results),
@@ -1213,7 +1206,12 @@ absl::Status IrEmitterUnnested::EmitCustomCallThunk(
         called_computations.empty() ? nullptr : called_computations[0]);
   };
 
-  auto legacy_thunk = [&] {
+  auto legacy_thunk =
+      [&]() -> absl::StatusOr<std::unique_ptr<CustomCallThunk>> {
+    std::string opaque =
+        backend_config.ok()
+            ? backend_config->custom_call_backend_config().opaque()
+            : instr->raw_backend_config_string();
     return CustomCallThunk::Create(
         Thunk::ThunkInfo::WithProfileAnnotation(instr), call_target_name,
         std::move(custom_call_target), std::move(operands), std::move(results),
@@ -1383,11 +1381,23 @@ absl::Status IrEmitterUnnested::EmitTritonCustomCall(
         ir_emitter_context_->name_uniquer()->GetUniqueName(call.name);
     VLOG(3) << "Generating: " << kernel_name;
 
-    auto triton_module =
-        mlir::parseSourceString<mlir::ModuleOp>(call.ir, &mlir_context);
-    TF_RET_CHECK(triton_module);
+    mlir::OwningOpRef<mlir::ModuleOp> triton_module;
+    {
+      mlir::BaseScopedDiagnosticHandler diagnostic_handler(&mlir_context);
+      triton_module =
+          mlir::parseSourceString<mlir::ModuleOp>(call.ir, &mlir_context);
+      if (!triton_module) {
+        return absl::InvalidArgumentError(
+            absl::StrCat("Failed to parse Triton module: ",
+                         diagnostic_handler.ConsumeStatus().message(),
+                         "\ninput ir: ", call.ir));
+      }
+    }
+
     auto triton_fn =
         triton_module->lookupSymbol<mlir::triton::FuncOp>(call.name);
+    TF_RET_CHECK(triton_fn)
+        << "Call name not found in the Triton module: " << call.name;
     triton_fn.setName(kernel_name);
     size_t arg_size = triton_fn.getNumArguments();
 
@@ -2327,11 +2337,6 @@ absl::Status IrEmitterUnnested::EmitCopyDoneThunk(const HloInstruction* instr) {
 }
 
 absl::Status IrEmitterUnnested::EmitSendThunk(const HloSendInstruction* instr) {
-  // TODO(b/372306903): Do not require channel id for send.
-  if (!instr->channel_id().has_value()) {
-    return absl::InternalError("Unknown send instruction channel id");
-  }
-
   const HloInstruction* src = instr->operand(0);
   TF_ASSIGN_OR_RETURN(BufferAllocation::Slice buffer,
                       GetAllocationSliceForHlo(src, {}));
@@ -2372,6 +2377,11 @@ absl::Status IrEmitterUnnested::EmitSendThunk(const HloSendInstruction* instr) {
     return absl::OkStatus();
   }
 
+  if (!instr->channel_id().has_value()) {
+    return absl::InternalError(
+        "Unknown channel id in host transfer send instruction");
+  }
+
   AddThunkToThunkSequence(std::make_unique<SendThunk>(
       Thunk::ThunkInfo::WithProfileAnnotation(instr), src->shape(), buffer,
       *instr->channel_id(), send_recv_events_,
@@ -2383,13 +2393,13 @@ absl::Status IrEmitterUnnested::EmitSendThunk(const HloSendInstruction* instr) {
 
 absl::Status IrEmitterUnnested::EmitSendDoneThunk(
     const HloSendDoneInstruction* instr) {
-  // TODO(b/372306903): Do not require channel id for send-done.
-  if (!instr->channel_id().has_value()) {
-    return absl::InternalError("Unknown send done instruction channel id");
-  }
-
   if (!instr->is_host_transfer()) {
     return EmitNcclAsyncDone(Thunk::kNcclSendDone, instr);
+  }
+
+  if (!instr->channel_id().has_value()) {
+    return absl::InternalError(
+        "Unknown channel id in host transfer send done instruction");
   }
 
   AddThunkToThunkSequence(std::make_unique<SendDoneThunk>(
@@ -2400,11 +2410,6 @@ absl::Status IrEmitterUnnested::EmitSendDoneThunk(
 }
 
 absl::Status IrEmitterUnnested::EmitRecvThunk(const HloRecvInstruction* instr) {
-  // TODO(b/372306903): Do not require channel id for recv.
-  if (!instr->channel_id().has_value()) {
-    return absl::InternalError("Unknown recv instruction channel id");
-  }
-
   TF_RET_CHECK(instr->shape().IsTuple());
   TF_ASSIGN_OR_RETURN(BufferAllocation::Slice buffer,
                       GetAllocationSliceForHlo(instr, {0}));
@@ -2447,6 +2452,11 @@ absl::Status IrEmitterUnnested::EmitRecvThunk(const HloRecvInstruction* instr) {
     return absl::OkStatus();
   }
 
+  if (!instr->channel_id().has_value()) {
+    return absl::InternalError(
+        "Unknown channel id in host transfer recv instruction");
+  }
+
   AddThunkToThunkSequence(std::make_unique<RecvThunk>(
       Thunk::ThunkInfo::WithProfileAnnotation(instr),
       instr->shape().tuple_shapes()[0], buffer, *instr->channel_id(),
@@ -2459,15 +2469,13 @@ absl::Status IrEmitterUnnested::EmitRecvThunk(const HloRecvInstruction* instr) {
 
 absl::Status IrEmitterUnnested::EmitRecvDoneThunk(
     const HloRecvDoneInstruction* instr) {
-  // TODO(b/372306903): Do not require channel id for send-done.
-  if (!instr->channel_id().has_value()) {
-    return absl::InternalError("Unknown recv done instruction channel id");
-  }
-
   if (!instr->is_host_transfer()) {
     return EmitNcclAsyncDone(Thunk::kNcclRecvDone, instr);
   }
-
+  if (!instr->channel_id().has_value()) {
+    return absl::InternalError(
+        "Unknown channel id in host transfer recv done instruction");
+  }
   AddThunkToThunkSequence(std::make_unique<RecvDoneThunk>(
       Thunk::ThunkInfo::WithProfileAnnotation(instr), *instr->channel_id(),
       send_recv_events_, DeviceConstraint(instr)));

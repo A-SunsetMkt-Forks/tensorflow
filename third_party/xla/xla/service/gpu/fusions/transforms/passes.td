@@ -74,10 +74,8 @@ def LowerTensorsPass : Pass<"xla-gpu-lower-tensors", "mlir::ModuleOp"> {
 
   let dependentDialects = [
     "mlir::LLVM::LLVMDialect",
-    "mlir::complex::ComplexDialect",
     "mlir::func::FuncDialect",
     "mlir::gpu::GPUDialect",
-    "mlir::math::MathDialect",
     "mlir::scf::SCFDialect",
     "mlir::tensor::TensorDialect",
     "xla::gpu::XlaGpuDialect",
@@ -180,6 +178,9 @@ def LowerXlaGpuToScfPass :
     "mlir::tensor::TensorDialect", "xla::gpu::XlaGpuDialect", "mlir::vector::VectorDialect",
   ];
 
+  let options = [
+    Option<"warp_size", "warp_size", "int64_t", /*default=*/"32", "Warp size.">,
+  ];
   let constructor = "CreateLowerXlaGpuToScfPass()";
 }
 

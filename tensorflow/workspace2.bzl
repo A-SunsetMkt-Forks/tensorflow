@@ -150,9 +150,9 @@ def _tf_repositories():
     # LINT.IfChange
     tf_http_archive(
         name = "XNNPACK",
-        sha256 = "fc5a15b1a19fb4d53da06ed2b1012da549c3bfb36a1bfa92e3e002dd33008cb0",
-        strip_prefix = "XNNPACK-cc7c00ae7a378908502f58472969bbb6f0e95a22",
-        urls = tf_mirror_urls("https://github.com/google/XNNPACK/archive/cc7c00ae7a378908502f58472969bbb6f0e95a22.zip"),
+        sha256 = "3306f4178c8594b689165d385e644f03a3154c3be044f6ae36dd170fbf182cf5",
+        strip_prefix = "XNNPACK-983d013300f19fd3f4e33220b6401408e97a8d12",
+        urls = tf_mirror_urls("https://github.com/google/XNNPACK/archive/983d013300f19fd3f4e33220b6401408e97a8d12.zip"),
     )
     # LINT.ThenChange(//tensorflow/lite/tools/cmake/modules/xnnpack.cmake)
 
@@ -798,7 +798,6 @@ def _tf_repositories():
         sha256 = "c7ab64b1ccf9a678694a89035a8c865a693e4e872803778f91f0965c2f281d78",
         strip_prefix = "pybind11_protobuf-80f3440cd8fee124e077e2e47a8a17b78b451363",
         patch_file = [
-            "//third_party/pybind11_protobuf:protobuf.patch",
             "//third_party/pybind11_protobuf:remove_license.patch",
         ],
     )

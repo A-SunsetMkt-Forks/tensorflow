@@ -1,12 +1,12 @@
 load("@local_config_cuda//cuda:build_defs.bzl", "if_cuda")
 load("@local_config_rocm//rocm:build_defs.bzl", "if_rocm")
-load("@local_tsl//tsl/platform:build_config.bzl", "tf_proto_library")
-load("@local_tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/pjrt/gpu:package_groups.bzl", "xla_gpu_internal_packages")
 load("//xla/stream_executor:build_defs.bzl", "if_cuda_or_rocm", "if_gpu_is_configured")
 load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla/tsl:tsl.bzl", "if_google", "internal_visibility")
+load("//xla/tsl/platform:build_config.bzl", "tf_proto_library")
+load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 # Integrate with PJRT rather than the GPU client directly.
 package(
@@ -203,6 +203,7 @@ xla_cc_test(
         "@local_tsl//tsl/platform:casts",
         "@local_tsl//tsl/platform:env",
         "@local_tsl//tsl/platform:errors",
+        "@local_tsl//tsl/platform:platform_port",
         "@local_tsl//tsl/platform:protobuf",
         "@local_tsl//tsl/platform:status",
         "@local_tsl//tsl/platform:status_matchers",
@@ -217,15 +218,19 @@ cc_library(
     hdrs = ["nccl_id_store.h"],
     deps = [
         "//xla:status_macros",
+        "//xla:util",
+        "//xla/backends/gpu/collectives:gpu_clique_key",
+        "//xla/core/collectives:clique_id",
+        "//xla/core/collectives:clique_key",
         "//xla/pjrt/distributed:key_value_store_interface",
         "//xla/service:global_device_id",
         "//xla/service/gpu/runtime:nccl_api",
-        "//xla/service/gpu/runtime:nccl_clique_key",
         "@com_google_absl//absl/base:core_headers",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
         "@com_google_absl//absl/time",
+        "@local_tsl//tsl/platform:casts",
         "@local_tsl//tsl/platform:errors",
         "@local_tsl//tsl/platform:statusor",
     ],
