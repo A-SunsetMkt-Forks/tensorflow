@@ -1,8 +1,8 @@
 load("@llvm-project//mlir:tblgen.bzl", "gentbl_cc_library", "td_library")
-load("@local_tsl//tsl/platform:build_config.bzl", "tf_proto_library")
 load("//xla:xla.bzl", "xla_cc_test")
 load("//xla/tsl:tsl.bzl", "internal_visibility")
 load("//xla/tsl:tsl.default.bzl", "get_compatible_with_portable", "tsl_pybind_extension")
+load("//xla/tsl/platform:build_config.bzl", "tf_proto_library")
 
 package_group(
     name = "internal",
@@ -154,7 +154,9 @@ cc_library(
         ":ifrt_interfaces_inc_gen",
         ":ifrt_ops_inc_gen",
         ":sharding_param",
+        "//xla/pjrt:layout_mode",
         "//xla/python/ifrt",
+        "@com_google_absl//absl/log:check",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
         "@llvm-project//llvm:Support",
