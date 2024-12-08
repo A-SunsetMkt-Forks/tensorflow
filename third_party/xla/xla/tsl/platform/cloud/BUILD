@@ -1,14 +1,14 @@
 # Description:
 # Cloud file system implementation.
 
-load("@local_tsl//tsl/platform:build_config.bzl", "tsl_cc_test")
-load("@local_tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load(
     "//xla/tsl:tsl.bzl",
     "if_windows",
     "internal_visibility",
     "tsl_copts",
 )
+load("//xla/tsl/platform:build_config.bzl", "tsl_cc_test")
+load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 
 package(
     # copybara:uncomment default_applicable_licenses = ["//tensorflow:license"],
@@ -136,6 +136,7 @@ cc_library(
         "@local_tsl//tsl/platform:strcat",
         "@local_tsl//tsl/platform:stringprintf",
         "@local_tsl//tsl/platform:thread_annotations",
+        "@local_tsl//tsl/platform:types",
         "@local_tsl//tsl/profiler/lib:traceme",
     ],
     alwayslink = 1,
@@ -180,6 +181,7 @@ cc_library(
         "@local_tsl//tsl/platform:strcat",
         "@local_tsl//tsl/platform:stringprintf",
         "@local_tsl//tsl/platform:thread_annotations",
+        "@local_tsl//tsl/platform:types",
         "@local_tsl//tsl/profiler/lib:traceme",
     ],
     alwayslink = 1,

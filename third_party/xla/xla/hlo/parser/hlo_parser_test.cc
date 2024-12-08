@@ -433,6 +433,21 @@ ENTRY %TwoSendRecvBothWayRecvFist.v3 () -> (f32[], token[]) {
 )"
 },
 {
+"SendRecvWoChannelID",
+R"(HloModule SendRecvWoChannelID_module, entry_computation_layout={()->(f32[], token[])}
+
+ENTRY %computation () -> (f32[], token[]) {
+  %token0 = token[] after-all()
+  %recv = (f32[], u32[], token[]) recv(token[] %token0)
+  ROOT %recv-done = (f32[], token[]) recv-done((f32[], u32[], token[]) %recv)
+  %constant = f32[] constant(2.1)
+  %send = (f32[], u32[], token[]) send(f32[] %constant, token[] %token0)
+  %send-done = token[] send-done((f32[], u32[], token[]) %send)
+}
+
+)"
+},
+{
 "SendRecvWithHostTransfer",
 R"(HloModule HostTransferSendRecv_module, entry_computation_layout={()->(f32[], token[])}
 
@@ -2763,6 +2778,8 @@ class HloParameterizedParserTest
   // the string, asserts that it succeeded, stringifies the parsed module, and
   // checks that it equals the original string.
   void ExpectEqual() {
+    VLOG(3) << "Running HloParameterizedParserTest with short_form = "
+            << short_form << ", proto_round_trip = " << proto_round_trip;
     std::unique_ptr<HloModule> module;
     const std::string& original = GetParam().module_string;
     HloModuleConfig config;
@@ -3355,23 +3372,6 @@ ENTRY %TwoSendRecvBothWayRecvFist.v3 () -> f32[] {
 )";
   ExpectHasSubstr(ParseAndReturnUnverifiedModule(original).status().message(),
                   "unexpected attribute \"calls\"");
-}
-
-TEST_F(HloParserTest, MissingAttribute) {
-  const std::string original = R"(HloModule missing_attr_module
-
-ENTRY %TwoSendRecvBothWayRecvFist.v3 () -> f32[] {
-  %token0 = token[] after-all()
-  %recv = (f32[], u32[], token[]) recv(token[] %token0), channel_id=15
-  %recv-done = (f32[], token[]) recv-done((f32[], u32[], token[]) %recv), channel_id=15
-  ROOT %constant = f32[] constant(-2.1)
-  %send = (f32[], u32[], token[]) send(f32[] %constant, token[] %token0)
-  %send-done = token[] send-done((f32[], u32[], token[]) %send), channel_id=16
-}
-
-)";
-  ExpectHasSubstr(ParseAndReturnUnverifiedModule(original).status().message(),
-                  "attribute channel_id is expected but not seen");
 }
 
 TEST_F(HloParserTest, PredecessorUndefined) {
@@ -5740,8 +5740,7 @@ TEST_F(HloParserTest, TranscendentalAccuracyMode) {
   expected_result_accuracy.set_mode(ResultAccuracy::HIGHEST);
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnUnverifiedModule(hlo_string));
-  auto* unary = Cast<HloUnaryInstruction>(
-      module->entry_computation()->root_instruction());
+  auto* unary = module->entry_computation()->root_instruction();
   EXPECT_TRUE(protobuf_util::ProtobufEquals(unary->result_accuracy(),
                                             expected_result_accuracy));
 }
@@ -5778,8 +5777,7 @@ TEST_F(HloParserTest, TranscendentalAccuracyRtol) {
   *expected_result_accuracy.mutable_tolerance() = tolerance;
   TF_ASSERT_OK_AND_ASSIGN(auto module,
                           ParseAndReturnUnverifiedModule(hlo_string));
-  auto* unary = Cast<HloUnaryInstruction>(
-      module->entry_computation()->root_instruction());
+  auto* unary = module->entry_computation()->root_instruction();
   EXPECT_TRUE(protobuf_util::ProtobufEquals(unary->result_accuracy(),
                                             expected_result_accuracy));
 }
@@ -5826,8 +5824,7 @@ TEST_F(HloParserTest, TranscendentalAccuracyNoConfig) {
   ResultAccuracy default_result_accuracy;
   default_result_accuracy.set_mode(ResultAccuracy::DEFAULT);
   EXPECT_TRUE(protobuf_util::ProtobufEquals(
-      Cast<HloUnaryInstruction>(module->entry_computation()->root_instruction())
-          ->result_accuracy(),
+      module->entry_computation()->root_instruction()->result_accuracy(),
       default_result_accuracy));
 }
 
@@ -5844,6 +5841,22 @@ ENTRY main {
   EXPECT_NE(absl::OkStatus(), result.status());
   ExpectHasSubstr(result.status().message(),
                   "error: unexpected attribute \"result_accuracy\"");
+}
+
+TEST_F(HloParserTest, EmptyOriginalValueIsPrintedCorrectly) {
+  const std::string hlo_string = R"(HloModule test
+
+ENTRY %test {
+  ROOT op = f32[] parameter(0), origin={}
+}
+
+
+)";
+  TF_ASSERT_OK_AND_ASSIGN(auto module,
+                          ParseAndReturnUnverifiedModule(hlo_string));
+
+  ExpectHasSubstr(module->ToString(HloPrintOptions::Fingerprint()),
+                  "origin={}");
 }
 
 }  // namespace

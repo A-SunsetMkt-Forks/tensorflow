@@ -2,15 +2,6 @@
 #    LLVM-based CPU backend for XLA.
 
 load("@bazel_skylib//rules:build_test.bzl", "build_test")
-load("@local_tsl//tsl/platform:build_config.bzl", "tf_proto_library")
-load(
-    "@local_tsl//tsl/platform:build_config_root.bzl",
-    "if_llvm_aarch64_available",
-    "if_llvm_powerpc_available",
-    "if_llvm_system_z_available",
-    "if_llvm_x86_available",
-)
-load("@local_tsl//tsl/platform:rules_cc.bzl", "cc_library")
 load(
     "//third_party/compute_library:build_defs.bzl",
     "acl_deps",
@@ -20,7 +11,6 @@ load(
     "//xla:xla.bzl",
     "xla_cc_binary",
     "xla_cc_test",
-    "xla_internal",
 )
 load("//xla/tests:build_defs.bzl", "xla_test")
 load("//xla/tsl:tsl.bzl", "internal_visibility", "tf_openmp_copts", "tsl_copts")
@@ -29,6 +19,15 @@ load(
     "//xla/tsl/mkl:build_defs.bzl",
     "mkl_deps",
 )
+load("//xla/tsl/platform:build_config.bzl", "tf_proto_library")
+load(
+    "//xla/tsl/platform:build_config_root.bzl",
+    "if_llvm_aarch64_available",
+    "if_llvm_powerpc_available",
+    "if_llvm_system_z_available",
+    "if_llvm_x86_available",
+)
+load("//xla/tsl/platform:rules_cc.bzl", "cc_library")
 load(":build_defs.bzl", "runtime_copts")
 
 package(
@@ -215,7 +214,6 @@ cc_library(
     copts = tsl_copts(),
     deps = [
         ":buffer_info_util",
-        ":compiler_functor",
         ":conv_canonicalization",
         ":cpu_executable",
         ":cpu_float_support",
@@ -231,7 +229,7 @@ cc_library(
         ":onednn_contraction_rewriter",
         ":onednn_ops_rewriter",
         ":parallel_task_assignment",
-        ":simple_orc_jit",
+        ":runtime_symbol_generator",
         ":thunk_emitter",
         ":xla_framework",
         "//xla:cpu_function_runtime",
@@ -244,7 +242,11 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla:xla_proto_cc",
+        "//xla/backends/cpu/codegen:cpu_features",
+        "//xla/backends/cpu/codegen:ir_compiler",
+        "//xla/backends/cpu/codegen:jit_compiler",
         "//xla/backends/cpu/codegen:target_machine_features",
+        "//xla/backends/cpu/runtime:function_library",
         "//xla/backends/cpu/runtime:thunk",
         "//xla/hlo/analysis:hlo_ordering",
         "//xla/hlo/analysis:indexed_array_analysis",
@@ -460,7 +462,7 @@ xla_test(
         "//xla/service:hlo_runner_interface",
         "//xla/service:hlo_runner_pjrt",
         "//xla/service:platform_util",
-        "//xla/tests:new_hlo_test_base",
+        "//xla/tests:hlo_runner_agnostic_test_base",
         "//xla/tests:pjrt_client_registry",
         "//xla/tests:xla_internal_test_main",
         "//xla/tsl/lib/monitoring:collected_metrics",
@@ -492,22 +494,20 @@ cc_library(
 )
 
 cc_library(
-    name = "simple_orc_jit",
+    name = "runtime_symbol_generator",
     srcs = [
-        "simple_orc_jit.cc",
+        "runtime_symbol_generator.cc",
         "windows_compatibility.cc",
         "windows_compatibility.h",
     ],
-    hdrs = ["simple_orc_jit.h"],
+    hdrs = ["runtime_symbol_generator.h"],
     copts = if_enable_acl(["-DXLA_CPU_USE_ACL=1"]) + tsl_copts(),
     deps = [
-        ":compiler_functor",
         ":cpu_runtime",
         ":onednn_convolution",
         ":onednn_layer_norm",
         ":onednn_matmul",
         ":onednn_softmax",
-        ":orc_jit_memory_mapper",
         ":runtime_conv2d",
         ":runtime_conv2d_acl",
         ":runtime_conv2d_mkl",
@@ -526,29 +526,16 @@ cc_library(
         ":runtime_single_threaded_fft",
         ":runtime_single_threaded_matmul",
         ":runtime_topk",
-        "//xla:types",
-        "//xla:util",
-        "//xla/backends/cpu/codegen:contiguous_section_memory_manager",
         "//xla/service:custom_call_target_registry",
-        "//xla/service:llvm_compiler",
-        "@com_google_absl//absl/container:flat_hash_map",
-        "@com_google_absl//absl/container:flat_hash_set",
         "@com_google_absl//absl/functional:any_invocable",
-        "@com_google_absl//absl/memory",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/types:span",
+        "@com_google_absl//absl/strings:string_view",
         "@llvm-project//llvm:Core",
-        "@llvm-project//llvm:ExecutionEngine",
-        "@llvm-project//llvm:MC",  # fixdeps: keep
         "@llvm-project//llvm:OrcJIT",
         "@llvm-project//llvm:OrcShared",
         "@llvm-project//llvm:Support",
-        "@llvm-project//llvm:Target",  # fixdeps: keep
-        "@llvm-project//llvm:TargetParser",
         "@llvm-project//mlir:mlir_c_runner_utils",
         "@local_tsl//tsl/platform:logging",
-        "@local_tsl//tsl/platform:platform_port",
-    ] + xla_internal(["service/cpu:named_orc_jit_memory_mapper"]),
+    ],
 )
 
 cc_library(
@@ -593,7 +580,6 @@ cc_library(
     hdrs = ["cpu_executable.h"],
     deps = [
         ":cpu_runtime",
-        ":simple_orc_jit",
         "//xla:executable_run_options",
         "//xla:literal",
         "//xla:shape_tree",
@@ -602,6 +588,7 @@ cc_library(
         "//xla:util",
         "//xla:xla_data_proto_cc",
         "//xla/backends/cpu/runtime:buffer_allocations",
+        "//xla/backends/cpu/runtime:function_library",
         "//xla/backends/cpu/runtime:thread_pool_task_runner",
         "//xla/backends/cpu/runtime:thunk",
         "//xla/backends/cpu/runtime:thunk_executor",
@@ -610,6 +597,7 @@ cc_library(
         "//xla/service:custom_call_status",
         "//xla/service:custom_call_status_internal",
         "//xla/service:executable",
+        "//xla/service:hlo_execution_profile",
         "//xla/service:hlo_profile_printer_data_cc",
         "//xla/service:hlo_value",
         "//xla/service:maybe_owning_device_memory",
@@ -631,6 +619,7 @@ cc_library(
         "@llvm-project//llvm:OrcShared",
         "@llvm-project//llvm:Support",
         "@local_tsl//tsl/platform:env",
+        "@local_tsl//tsl/platform:errors",
         "@local_tsl//tsl/platform:logging",
         "@local_tsl//tsl/platform:statusor",
     ],
@@ -908,6 +897,7 @@ cc_library(
         "//xla/service:hlo_module_config",
         "//xla/service:hlo_proto_cc",
         "//xla/service:pattern_matcher",
+        "//xla/service/cpu:backend_config_proto_cc",
         "@com_google_absl//absl/algorithm:container",
         "@com_google_absl//absl/container:flat_hash_map",
         "@com_google_absl//absl/status",
@@ -1000,35 +990,6 @@ xla_cc_binary(
         "@com_google_absl//absl/strings:str_format",
         "@local_tsl//tsl/platform:logging",
         "@local_tsl//tsl/platform:platform_port",
-    ],
-)
-
-cc_library(
-    name = "compiler_functor",
-    srcs = ["compiler_functor.cc"],
-    hdrs = ["compiler_functor.h"],
-    deps = [
-        ":cpu_runtime",
-        "//xla:types",
-        "//xla:util",
-        "//xla/backends/cpu/codegen:polynomial_approximations",
-        "//xla/service:llvm_compiler",
-        "//xla/service/llvm_ir:llvm_util",
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/functional:any_invocable",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/synchronization",
-        "@llvm-project//llvm:Analysis",
-        "@llvm-project//llvm:Core",
-        "@llvm-project//llvm:Instrumentation",
-        "@llvm-project//llvm:MC",
-        "@llvm-project//llvm:Object",
-        "@llvm-project//llvm:OrcJIT",
-        "@llvm-project//llvm:Passes",
-        "@llvm-project//llvm:Support",
-        "@llvm-project//llvm:Target",
-        "@llvm-project//llvm:TargetParser",
-        "@local_tsl//tsl/platform:logging",
     ],
 )
 
@@ -1703,6 +1664,7 @@ xla_cc_test(
     size = "small",
     srcs = ["vectorized_reduce_with_no_vector_registers_test.cc"],
     tags = ["not_run:arm"],
+    target_compatible_with = ["@platforms//cpu:x86_64"],
     deps = [
         ":cpu_compiler",
         ":cpu_transfer_manager",
