@@ -204,9 +204,11 @@ NB_MODULE(xla_extension, m) {
       .value("U32", U32)
       .value("U64", U64)
       .value("F16", F16)
+      .value("F4E2M1FN", F4E2M1FN)
       // TODO: Uncomment once the minimum ml_dtypes in JAX is >= 0.5.0.
       // .value("F8E3M4", F8E3M4)
       // .value("F8E4M3", F8E4M3)
+      .value("F8E8M0FNU", F8E8M0FNU)
       .value("F8E4M3FN", F8E4M3FN)
       .value("F8E4M3B11FNUZ", F8E4M3B11FNUZ)
       .value("F8E4M3FNUZ", F8E4M3FNUZ)
@@ -257,7 +259,7 @@ NB_MODULE(xla_extension, m) {
         // like ClientAndPtr).
         nb::bytes serialized = nb::cast<nb::bytes>(t[0]);
         absl::StatusOr<PjRtXlaLayout> layout = PjRtXlaLayout::Deserialize(
-            std::string_view(serialized.c_str(), serialized.size()));
+            absl::string_view(serialized.c_str(), serialized.size()));
         ThrowIfError(layout.status());
         new (self) PjRtXlaLayout(std::move(*layout));
       });
@@ -468,7 +470,7 @@ NB_MODULE(xla_extension, m) {
         });
 
   TF_CHECK_OK(PyArray::RegisterTypes(m));
-  jax::RegisterDeviceList(m);
+  jax::PyDeviceList::Register(m);
   jax::RegisterSharding(m);
 
   nb::class_<CompiledMemoryStats>(m, "CompiledMemoryStats")
@@ -691,8 +693,8 @@ NB_MODULE(xla_extension, m) {
       // `blocking_key_value_get_bytes()`.
       .def(
           "key_value_set",
-          [](DistributedRuntimeClient& client, std::string_view key,
-             std::string_view value, bool allow_overwrite) {
+          [](DistributedRuntimeClient& client, absl::string_view key,
+             absl::string_view value, bool allow_overwrite) {
             nb::gil_scoped_release gil_release;
             xla::ThrowIfError(client.KeyValueSet(key, value, allow_overwrite));
           },
@@ -702,18 +704,18 @@ NB_MODULE(xla_extension, m) {
       // Use `key_value_set_bytes()` and `blocking_key_value_get_bytes()`.
       .def(
           "key_value_set_bytes",
-          [](DistributedRuntimeClient& client, std::string_view key,
+          [](DistributedRuntimeClient& client, absl::string_view key,
              nb::bytes value, bool allow_overwrite) {
             nb::gil_scoped_release gil_release;
             xla::ThrowIfError(client.KeyValueSet(
-                key, std::string_view(value.c_str(), value.size()),
+                key, absl::string_view(value.c_str(), value.size()),
                 allow_overwrite));
           },
           nb::arg("key"), nb::arg("value"), nb::arg("allow_overwrite") = false)
       // Assumes that all values in the directory are Python strings.
       .def(
           "key_value_dir_get",
-          [](DistributedRuntimeClient& client, std::string_view key) {
+          [](DistributedRuntimeClient& client, absl::string_view key) {
             nb::gil_scoped_release gil_release;
             return xla::ValueOrThrow(client.KeyValueDirGet(key));
           },
@@ -723,7 +725,7 @@ NB_MODULE(xla_extension, m) {
       // explicitly.
       .def(
           "key_value_dir_get_bytes",
-          [](DistributedRuntimeClient& client, std::string_view key)
+          [](DistributedRuntimeClient& client, absl::string_view key)
               -> std::vector<std::pair<std::string, nb::bytes>> {
             nb::gil_scoped_release gil_release;
             std::vector<std::pair<std::string, std::string>> result =
@@ -740,7 +742,7 @@ NB_MODULE(xla_extension, m) {
           nb::arg("key"))
       .def(
           "key_value_delete",
-          [](DistributedRuntimeClient& client, std::string_view key) {
+          [](DistributedRuntimeClient& client, absl::string_view key) {
             nb::gil_scoped_release gil_release;
             return xla::ThrowIfError(client.KeyValueDelete(key));
           },
@@ -861,7 +863,7 @@ NB_MODULE(xla_extension, m) {
              return nb::bytes(serialized.data(), serialized.size());
            })
       .def("__getattr__",
-           [](ifrt::Topology& topology, std::string_view name) -> nb::object {
+           [](ifrt::Topology& topology, absl::string_view name) -> nb::object {
              const auto& attrs = topology.Attributes().map();
              auto it = attrs.find(name);
              if (it != attrs.end()) {
